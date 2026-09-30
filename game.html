@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>直入地獄</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#100914;color:#fff;font-family:"Courier New","Microsoft JhengHei",monospace;touch-action:none}
+body{display:flex;align-items:center;justify-content:center;background:repeating-linear-gradient(0deg,#28132d 0 4px,#160b1b 4px 8px)}
+#box{position:relative;width:min(100vw,520px);height:min(100dvh,860px);min-height:500px;border:4px solid #d8513d;background:#160d1c;overflow:hidden;box-shadow:0 0 30px #000}
+canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+#home,#hud,#title,#hint,#touch,#over{position:absolute;z-index:3}#home{top:10px;left:12px;color:#ffe0a6;text-decoration:none;font-weight:bold;text-shadow:2px 2px #000}
+#hud{top:10px;right:12px;text-align:right;color:#fff0bd;font-weight:bold;text-shadow:2px 2px #000}
+#title{top:45px;left:50%;transform:translateX(-50%);margin:0;white-space:nowrap;color:#ff7652;text-shadow:3px 3px #5c1720;font-size:clamp(25px,7vw,38px)}
+#hint{bottom:12px;left:50%;transform:translateX(-50%);white-space:nowrap;color:#e7c7b3;font-size:13px}
+#touch{left:0;right:0;bottom:12px;display:none;justify-content:space-between;padding:0 14px;pointer-events:none}.group{display:flex;gap:10px}
+button{font:inherit;font-weight:bold;color:#fff4d2;background:#79282f;border:3px solid #ffb35b;box-shadow:4px 4px #321018;padding:11px 18px}
+#touch button{pointer-events:auto;width:64px;height:58px;padding:0;font-size:25px;opacity:.9}#touch #jump{width:86px;font-size:16px}
+#over{display:none;inset:0;background:#080409df;align-items:center;justify-content:center;flex-direction:column;text-align:center}#over.show{display:flex}
+#over h2{font-size:clamp(34px,10vw,56px);color:#ff543d;text-shadow:4px 4px #5a1118;margin:0 0 12px}#over p{font-size:19px;line-height:1.6}
+@media(pointer:coarse),(max-width:700px){#box{width:100vw;height:100dvh;border:0}#touch{display:flex}#hint{display:none}}
+</style>
+</head>
+<body><div id="box">
+<canvas id="game" width="480" height="800"></canvas>
+<a id="home" href="index.html">← 回首頁</a><h1 id="title">直入地獄</h1>
+<div id="hud">分數：<span id="score">0</span><br>最高分：<span id="best">0</span></div>
+<div id="hint">← → 移動　空白鍵跳躍</div>
+<div id="touch"><div class="group"><button id="left">←</button><button id="right">→</button></div><button id="jump">跳躍</button></div>
+<div id="over"><h2>墜入地獄</h2><p>本次分數：<b id="final">0</b><br>最高分：<b id="finalBest">0</b></p><button id="restart">重新開始</button></div>
+</div>
+<script>
+(()=>{"use strict";
+const c=document.querySelector("#game"),x=c.getContext("2d"),W=c.width,H=c.height;
+const $=s=>document.querySelector(s),scoreE=$("#score"),bestE=$("#best"),over=$("#over");
+let best=+(localStorage.getItem("hellBest")||0);bestE.textContent=best;
+let k={l:0,r:0,j:0},p,plats,cam,score,run,last,spawn,lava;
+const rnd=(a,b)=>Math.random()*(b-a)+a,clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function add(){spawn+=rnd(70,112);let w=rnd(72,145);plats.push({x:rnd(16,W-w-16),y:spawn,w,h:14,t:Math.random()<.18})}
+function reset(){p={x:230,y:160,w:20,h:28,vx:0,vy:0,g:0,c:0};plats=[{x:182,y:210,w:116,h:14,t:0}];cam=score=0;spawn=235;lava=735;run=1;over.classList.remove("show");while(spawn<1500)add();last=performance.now();requestAnimationFrame(loop)}
+addEventListener("keydown",e=>{if(e.key=="ArrowLeft")k.l=1;if(e.key=="ArrowRight")k.r=1;if(e.key==" "){k.j=1;e.preventDefault()}});
+addEventListener("keyup",e=>{if(e.key=="ArrowLeft")k.l=0;if(e.key=="ArrowRight")k.r=0;if(e.key==" ")k.j=0});
+function bind(id,key){let q=$(id);q.onpointerdown=e=>(e.preventDefault(),k[key]=1);["onpointerup","onpointercancel","onpointerleave"].forEach(v=>q[v]=e=>(e.preventDefault(),k[key]=0))}
+bind("#left","l");bind("#right","r");bind("#jump","j");$("#restart").onclick=reset;
+function end(){if(!run)return;run=0;if(score>best){best=score;localStorage.setItem("hellBest",best)}bestE.textContent=best;$("#final").textContent=score;$("#finalBest").textContent=best;over.classList.add("show")}
+function update(dt){let oy=p.y;if(k.l)p.vx-=.55*dt;if(k.r)p.vx+=.55*dt;p.vx*=Math.pow(.78,dt);p.vx=clamp(p.vx,-5.2,5.2);p.c=p.g?7:p.c-dt;if(k.j&&p.c>0){p.vy=-10.5;p.g=0;p.c=0;k.j=0}p.vy=Math.min(13,p.vy+.52*dt);p.x=clamp(p.x+p.vx*dt,0,W-p.w);p.y+=p.vy*dt;p.g=0;
+if(p.vy>=0)for(const a of plats)if(oy+p.h<=a.y+2&&p.y+p.h>=a.y&&p.x+p.w>a.x&&p.x<a.x+a.w){p.y=a.y-p.h;p.vy=0;p.g=1;break}
+let target=Math.max(0,p.y-300);cam+=(target-cam)*Math.min(1,.09*dt);score=Math.max(score,Math.floor(cam/10));scoreE.textContent=score;while(spawn<cam+H+450)add();plats=plats.filter(a=>a.y>cam-100);lava=cam+H-44;if(p.y+p.h>=lava)end()}
+function R(a,b,d,e,col){x.fillStyle=col;x.fillRect(Math.round(a),Math.round(b),Math.round(d),Math.round(e))}
+function draw(){R(0,0,W,H,"#170d1d");for(let y=-((cam*.25)%64);y<H;y+=64)for(let a=0;a<W;a+=96)R(a-((Math.floor((y+cam*.25)/64)&1)*48),y,92,4,"#28122b");
+for(const a of plats){let y=a.y-cam;if(y>-20&&y<H){R(a.x,y,a.w,a.h,a.t?"#80513d":"#69383f");R(a.x,y,a.w,4,a.t?"#d6a55b":"#c35a45");}}
+let ly=lava-cam;R(0,ly,W,H-ly,"#8d1f25");R(0,ly,W,8,"#ff9b3d");
+let px=p.x,py=p.y-cam;R(px+4,py,12,5,"#35141e");R(px+2,py+5,16,12,"#e5b36b");R(px+5,py+8,3,3,"#181018");R(px+13,py+8,3,3,"#181018");R(px+3,py+17,14,8,"#b72f38");R(px,py+18,4,5,"#b72f38");R(px+16,py+18,4,5,"#b72f38");R(px+4,py+25,5,3,"#42202a");R(px+12,py+25,5,3,"#42202a")}
+function loop(now){if(!run){draw();return}let dt=Math.min(2.2,(now-last)/16.667||1);last=now;update(dt);draw();requestAnimationFrame(loop)}reset();
+})();
+</script></body></html>
