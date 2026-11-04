@@ -1,0 +1,187 @@
+name: Update Google Alerts news
+
+on:
+  schedule:
+    # 08:00 every day in Taiwan; GitHub Actions may begin a little late.
+    - cron: '0 8 * * *'
+      timezone: 'Asia/Taipei'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update-google-alerts-news
+  cancel-in-progress: false
+
+jobs:
+  update-news:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out the GitHub Pages source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Fetch Google Alerts feed and write news.json
+        env:
+          ALERTS_RSS_URL: 'https://www.google.com/alerts/feeds/14065557234429069225/6074583596596296782'
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import re
+          import time
+          from datetime import datetime, timezone
+          from email.utils import parsedate_to_datetime
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import parse_qs, urlparse
+          from urllib.request import Request, urlopen
+          from xml.etree import ElementTree as ET
+          from zoneinfo import ZoneInfo
+
+          FEED_URL = os.environ['ALERTS_RSS_URL']
+          ATOM = '{http://www.w3.org/2005/Atom}'
+
+          class TextOnly(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=True)
+                  self.parts = []
+              def handle_data(self, value):
+                  self.parts.append(value)
+              def handle_starttag(self, tag, attrs):
+                  if tag in ('br', 'p', 'div', 'li'):
+                      self.parts.append(' ')
+
+          def clean_html(value):
+              parser = TextOnly()
+              parser.feed(value or '')
+              return re.sub(r'\s+', ' ', ''.join(parser.parts)).strip()
+
+          def node_text(node):
+              return ''.join(node.itertext()) if node is not None else ''
+
+          def valid_link(value):
+              if not value:
+                  return ''
+              parsed = urlparse(value)
+              if parsed.scheme not in ('https', 'http') or not parsed.netloc:
+                  return ''
+              # Google Alerts Atom links can be redirects through google.com/url?url=...
+              if parsed.netloc.lower() in ('google.com', 'www.google.com') and parsed.path == '/url':
+                  actual = parse_qs(parsed.query).get('url', [''])[0]
+                  if actual and urlparse(actual).scheme in ('http', 'https'):
+                      return actual
+              return value
+
+          def date_sort_key(value):
+              try:
+                  date = datetime.fromisoformat(value.replace('Z', '+00:00'))
+              except (AttributeError, ValueError):
+                  try:
+                      date = parsedate_to_datetime(value)
+                  except (TypeError, ValueError):
+                      return 0
+              if date.tzinfo is None:
+                  date = date.replace(tzinfo=timezone.utc)
+              return date.timestamp()
+
+          def read_feed():
+              request = Request(FEED_URL, headers={
+                  'User-Agent': 'Mozilla/5.0 (compatible; NewsFeedUpdater/1.0)',
+                  'Accept': 'application/atom+xml, application/rss+xml, application/xml, text/xml, */*'
+              })
+              last_error = None
+              for attempt in range(3):
+                  try:
+                      with urlopen(request, timeout=30) as response:
+                          return response.read()
+                  except Exception as exc:
+                      last_error = exc
+                      if attempt < 2:
+                          time.sleep(2 ** attempt)
+              raise RuntimeError(f'Unable to fetch Google Alerts feed: {last_error}')
+
+          root = ET.fromstring(read_feed())
+          items = []
+          if root.tag == ATOM + 'feed':
+              for entry in root.findall(ATOM + 'entry'):
+                  title = clean_html(node_text(entry.find(ATOM + 'title')))
+                  published = node_text(entry.find(ATOM + 'published')) or node_text(entry.find(ATOM + 'updated'))
+                  summary = clean_html(node_text(entry.find(ATOM + 'content')) or
+                                       node_text(entry.find(ATOM + 'summary')))
+                  url = ''
+                  for link in entry.findall(ATOM + 'link'):
+                      if link.get('rel', 'alternate') == 'alternate':
+                          url = link.get('href', '')
+                          break
+                  url = valid_link(url)
+                  if title and url:
+                      items.append({'title': title, 'url': url,
+                                    'published': published, 'summary': summary[:300]})
+          elif root.tag.lower() == 'rss' or root.tag.lower().endswith('}rss'):
+              for entry in root.findall('./channel/item'):
+                  title = clean_html(node_text(entry.find('title')))
+                  url = valid_link(node_text(entry.find('link')).strip())
+                  published = node_text(entry.find('pubDate'))
+                  summary = clean_html(node_text(entry.find('description')))
+                  if title and url:
+                      items.append({'title': title, 'url': url,
+                                    'published': published, 'summary': summary[:300]})
+          else:
+              raise RuntimeError(f'Unexpected feed format: {root.tag!r}; existing news.json kept')
+
+          # Most recent first. Remove duplicates and keep a manageable number.
+          items.sort(key=lambda x: date_sort_key(x['published']), reverse=True)
+          unique = []
+          seen = set()
+          for item in items:
+              if item['url'] in seen:
+                  continue
+              seen.add(item['url'])
+              unique.append(item)
+              if len(unique) >= 12:
+                  break
+
+          result = {
+              'source': 'Google Alerts',
+              'updated_at': datetime.now(ZoneInfo('Asia/Taipei')).isoformat(timespec='seconds'),
+              'items': unique
+          }
+          Path('news.json').write_text(
+              json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
+          )
+          print(f'Updated news.json: {len(unique)} articles')
+          PYTHON
+
+      - name: Commit updated news.json
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add news.json
+          if git diff --cached --quiet; then
+            echo 'news.json has no changes.'
+          else
+            git commit -m 'chore: update Google Alerts news'
+            git push
+          fi
+
+      # GITHUB_TOKEN commits do not trigger the branch-based Pages builder.
+      # Deploy the updated files explicitly from this same workflow.
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Package complete site (including games/assets)
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: '.'
+
+      - name: Deploy the refreshed site
+        id: deployment
+        uses: actions/deploy-pages@v4
