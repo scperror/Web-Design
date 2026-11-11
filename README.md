@@ -1,2 +1,2 @@
 # Web-Design
-Web Design Course at Tatung University
+江瑞恩｜媒體設計學系遊戲設計組，展示獨立遊戲作品、開發成果與創作歷程。
